@@ -121,11 +121,11 @@ jobs:
             --body "## New Project Onboarding: \`${{ inputs.project_name }}\`
                     **Description:** ${{ inputs.description }}
                     ### Teams
-                    | Role | Members |
-                    |------|---------|
-                    | Admins | \`${{ inputs.admins }}\` |
-                    | Developers | \`${{ inputs.developers }}\` |
-                    | Readers | \`${{ inputs.readers || '—' }}\` |
+                    | Role       | Members                          |
+                    |------------|----------------------------------|
+                    | Admins     | \`${{ inputs.admins }}\`         |
+                    | Developers | \`${{ inputs.developers }}\`     |
+                    | Readers    | \`${{ inputs.readers || '—' }}\` |
 
                     **Repositories:** \`${{ inputs.repositories }}\`
 
