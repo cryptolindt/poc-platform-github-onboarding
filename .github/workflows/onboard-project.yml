@@ -130,8 +130,8 @@ jobs:
                     **Repositories:** \`${{ inputs.repositories }}\`
 
                     ---
-                    > Review the Terraform plan posted by CI before merging."
-> Merging this PR will create the GitHub teams, repositories, and rulesets." \
+                    > Review the Terraform plan posted by CI before merging.
+                    > Merging this PR will create the GitHub teams, repositories, and rulesets." \
             --head "$BRANCH" \
             --base main \
             --assignee "${{ github.actor }}"
