@@ -1,0 +1,137 @@
+name: Onboard New Project
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: "Project slug — lowercase letters and hyphens only (e.g. project-alpha)"
+        required: true
+      description:
+        description: "Human-readable project description"
+        required: true
+      admins:
+        description: "Comma-separated GitHub usernames for the admin team"
+        required: true
+      developers:
+        description: "Comma-separated GitHub usernames for the developer team"
+        required: true
+      readers:
+        description: "Comma-separated GitHub usernames for read-only access (optional)"
+        required: false
+        default: ""
+      repositories:
+        description: "Comma-separated repository suffixes to create (e.g. app,infra,gitops)"
+        required: true
+        default: "app,infra,gitops"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-onboarding-pr:
+    name: Generate Onboarding PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate project name
+        run: |
+          if ! echo "${{ inputs.project_name }}" | grep -qE '^[a-z][a-z0-9-]+$'; then
+            echo "ERROR: project_name must be lowercase letters, digits, and hyphens only"
+            exit 1
+          fi
+          # Check for duplicate project name
+          if grep -q '"${{ inputs.project_name }}"' terraform/projects.auto.tfvars 2>/dev/null; then
+            echo "ERROR: project '${{ inputs.project_name }}' already exists in projects.auto.tfvars"
+            exit 1
+          fi
+
+      - name: Generate Terraform entry
+        id: generate
+        env:
+          PROJECT:     ${{ inputs.project_name }}
+          DESCRIPTION: ${{ inputs.description }}
+          ADMINS:      ${{ inputs.admins }}
+          DEVELOPERS:  ${{ inputs.developers }}
+          READERS:     ${{ inputs.readers }}
+          REPOS:       ${{ inputs.repositories }}
+        run: |
+          # Convert comma-separated strings to HCL list format
+          to_hcl_list() {
+            echo "$1" | tr ',' '\n' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' | \
+              sed 's/.*/"&"/' | paste -sd ', '
+          }
+
+          ADMINS_HCL=$(to_hcl_list "$ADMINS")
+          DEVS_HCL=$(to_hcl_list "$DEVELOPERS")
+          READERS_HCL=""
+          [ -n "$READERS" ] && READERS_HCL=$(to_hcl_list "$READERS")
+
+          # Build repository blocks
+          REPO_BLOCKS=""
+          IFS=',' read -ra REPO_LIST <<< "$REPOS"
+          for repo in "${REPO_LIST[@]}"; do
+            repo=$(echo "$repo" | xargs)  # Trim whitespace
+            REPO_BLOCKS="${REPO_BLOCKS}
+              "${repo}" = {
+                description     = "${PROJECT} ${repo}"
+                topics          = ["${repo\"]
+                required_checks = ["ci / build", "ci / test"]
+            }"
+          done
+
+          # Append the new project block to projects.auto.tfvars
+          cat >> terraform/projects.auto.tfvars << TFVARS
+            "${PROJECT}" = {
+              description    = "${DESCRIPTION}"
+              default_branch = "main"
+
+              members = {
+                admins     = [${ADMINS_HCL}]
+                developers = [${DEVS_HCL}]
+                readers    = [${READERS_HCL}]
+              }
+
+              repositories = {
+                ${REPO_BLOCKS}
+              }
+            }
+          TFVARS
+
+          # Set output for PR creation
+          BRANCH="onboard/${PROJECT}-$(date +%Y%m%d%H%M%S)"
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+
+      - name: Create branch and open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH:   ${{ steps.generate.outputs.branch }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add terraform/projects.auto.tfvars
+          git commit -m "feat: onboard project ${{ inputs.project_name }}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "chore: onboard ${{ inputs.project_name }}" \
+            --body "## New Project Onboarding: \`${{ inputs.project_name }}\`
+                    **Description:** ${{ inputs.description }}
+                    ### Teams
+                    | Role | Members |
+                    |------|---------|
+                    | Admins | \`${{ inputs.admins }}\` |
+                    | Developers | \`${{ inputs.developers }}\` |
+                    | Readers | \`${{ inputs.readers || '—' }}\` |
+
+                    **Repositories:** \`${{ inputs.repositories }}\`
+
+                    ---
+                    > Review the Terraform plan posted by CI before merging."
+> Merging this PR will create the GitHub teams, repositories, and rulesets." \
+            --head "$BRANCH" \
+            --base main \
+            --assignee "${{ github.actor }}"
